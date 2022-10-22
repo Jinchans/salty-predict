@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: MIT
-// Referenced and heavily modified from pancakeswap prediction mini game on binance smart chain
-
+// Referenced and heavily modified from pancakeswap prediction game on binance smart chain
 
 pragma solidity ^0.8.7;
 
 // REMIX IMPORTS
 
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/security/ReentrancyGuard.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/access/Ownable.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/security/Pausable.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/utils/SafeERC20.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/IERC20.sol";
+// import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/security/ReentrancyGuard.sol";
+// import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/access/Ownable.sol";
+// import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/security/Pausable.sol";
+// import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/utils/SafeERC20.sol";
+// import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/IERC20.sol";
 
 
-// import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-// import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-// import "@openzeppelin/contracts/security/Pausable.sol";
-// import "@openzeppelin/contracts/access/Ownable.sol";
-// import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import "hardhat/console.sol"; // delete in production
 
@@ -25,16 +24,16 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
    using SafeERC20 for IERC20;
 
 
-   uint256 public minBetAmount; // minimum betting amount (denominated in wei)
-   uint256 public curEpoch; // current epoch for prediction round
-   uint256 public prevRound; // previous round id
-   uint256 public curRound; // current round id
-   address public adminAddress; // admin owner
-   uint256 public treasuryAmount; // treasury amount that was not claimed
+   uint256 public minBetAmount;
+   uint256 public curEpoch;
+   uint256 public prevRound;
+   uint256 public curRound;
+   address public adminAddress; 
+   uint256 public treasuryAmount;
    uint256 public treasuryFee;
-   uint256 public someVar; // some var
+   uint256 public totalSignatures; // signatures to unpause game
 
-   mapping(uint256 => mapping(address => BetInfo)) public ledger; // ledger of previous matches, including players and bets
+   mapping(uint256 => mapping(address => BetInfo)) public ledger;
    mapping(uint256 => Round) public rounds;
    mapping(address => uint256[]) public userRounds;
 
@@ -69,11 +68,11 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
     event Claim(address indexed sender, uint256 indexed epoch, uint256 amount);
     event StartRound(uint256 indexed epoch);
     event Pause(uint256 indexed epoch);
-    //event RewardsCalculated(uint256 indexed epoch, uint256 indexed rewardBaseCalAmount, uint256 indexed rewardAmount, uint256 indexed treasuryAmt);
 
     constructor(){
         adminAddress = msg.sender;
         treasuryFee = 1000; // 10%
+        minBetAmount = 1 ether;
     }
 
     function betRed(uint256 epoch) external payable whenNotPaused nonReentrant {
@@ -95,11 +94,6 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
         userRounds[msg.sender].push(epoch);
 
         emit BetRed(msg.sender, epoch, amount);
-    }
-
-    function someVarTest(uint256 someNumber) public returns (uint256) {
-        someVar = someNumber;
-        return someVar;
     }
 
     function betBlue(uint256 epoch) external payable whenNotPaused nonReentrant {
@@ -130,33 +124,24 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
      * @param epochs: array of epochs
      */
     function claim(uint256[] calldata epochs) external nonReentrant {
-        uint256 reward; // Initializes reward
+        uint256 reward;
                     
-
-        for (uint256 i = 0; i < epochs.length; i++) { // starts at epoch 1??????
+        for (uint256 i = 0; i < epochs.length; i++) {
            
             require(rounds[epochs[i]].startTimestamp != 0, "Round has not started");
             require(block.timestamp > rounds[epochs[i]].closeTimestamp, "Round has not ended");
 
             uint256 addedReward = 0;
             
-            // Round valid, claim rewards
             if (rounds[epochs[i]].oracleCalled) {
-                //console.log("Claim() ROUNDS EPOCH i: ", i);
-                //console.log("------------------------");
                 
                 require(claimable(epochs[i], msg.sender), "Not eligible for claim");
                 Round memory round = rounds[epochs[i]];
-                
-                //console.log("Round reward base calc amount", round.rewardBaseCalAmount);
 
-                // cannot claim from epoch/round 0, only can claim from epoch/round 1+ (there is no round 0) still abit confused
                 if(round.rewardBaseCalAmount != 0){
                 addedReward = (ledger[epochs[i]][msg.sender].amount * round.rewardAmount) / round.rewardBaseCalAmount;
                 }
-                //console.log("Added reward calculated value: ", addedReward);
             }
-            // Round invalid, refund bet amount
             else {
                 require(refundable(epochs[i], msg.sender), "Not eligible for refund");
                 addedReward = ledger[epochs[i]][msg.sender].amount;
@@ -167,14 +152,8 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
 
             emit Claim(msg.sender, epochs[i], addedReward);
         }
-
         if (reward > 0) {
-            // console.log("================================");
-            // console.log("================================");
-            // console.log("REWARD AMOUNT HERE BEFORE SEND", reward);
             _safeTransferBNB(address(msg.sender), reward);
-            //reward   (HERE ITS SENDING TOO MUCH FOR SOME REASON? DOUBLE CHECK CALC WRONG) 0.8 eth win
-            // reward = 1800000000000000000000000000000000000???? wtf
         }
     }
 
@@ -253,10 +232,7 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
             } else {
                 treasuryAmt = (round.totalAmount * treasuryFee) / 10000;
             }
-            // console.log("TREASURY AMT?", treasuryAmt);
-            // console.log("Round Total Amount: ", round.totalAmount);
             rewardAmount = round.totalAmount - treasuryAmt;
-            // console.log("REWARD AMOUNT:", rewardAmount);
         }
         // House wins
         else {
@@ -268,21 +244,17 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
         round.rewardBaseCalAmount = rewardBaseCalAmount;
         round.rewardAmount = rewardAmount;
 
-        //console.log("REWARD?", rewardAmount); //1.8 eth reward
-
-        // Add to treasury
-        //console.log("TREASURY AMT", treasuryAmt); // works
-        //console.log("TRES AMOUNT1:", treasuryAmount);
         treasuryAmount += treasuryAmt;
-        //console.log("TRES AMOUNT2:", treasuryAmount);
-        //console.log("TREASURY AMOUNT", treasuryAmount);
-        //emit RewardsCalculated(epoch, rewardBaseCalAmount, rewardAmount, treasuryAmt);
+
     }
 
     function executeRound() public whenNotPaused onlyOwner {
-         uint256 currentRoundId = prevRound + 1;
-         //console.log("executeRound() current Epoch: ", curEpoch);
-        // dont calc rewards of round that doesnt exist (ex. epoch = 0 - 1 = -1 OR 1-1 = 0)
+        
+        if(curRound != 0){
+         require(curRound == prevRound, "prev round has not yet ended!");
+        }
+
+         curRound = prevRound + 1;
          if(curEpoch > 0){
             _calculateRewards(curEpoch); //- 1
          }
@@ -306,11 +278,12 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
         uint256 epoch,
         uint256 winner
     ) external onlyOwner {
+        require(curRound > prevRound, "prev round has not yet ended!");
         require(block.timestamp >= rounds[epoch].startTimestamp, "Can only end round after round started");
         Round storage round = rounds[epoch];
         round.winningPlayer = winner;
         round.oracleCalled = true;
-        // add round id?
+        prevRound ++;
     }
 
     ///////////////////////////////////////////////
@@ -331,8 +304,24 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
         treasuryAmount = 0;
         console.log("currentTreasuryAmount: ", currentTreasuryAmount);
         _safeTransferBNB(adminAddress, currentTreasuryAmount);
+    }
 
-        //emit TreasuryClaim(currentTreasuryAmount);
+    function pause() external whenNotPaused onlyOwner {
+        _pause();
+        totalSignatures = 0;
+    }
+
+    function playerSignature() public whenPaused {
+        totalSignatures++;
+    }
+
+    function confirmUnpause() external whenPaused {
+        require(totalSignatures >= 2, "require at least 2 people to sign");
+        _unpause();
+    }
+
+    function _unpause() internal override whenPaused {
+        _unpause();
     }
 
 }
