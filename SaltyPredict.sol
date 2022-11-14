@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT
-// Referenced and heavily modified from pancakeswap prediction game on binance smart chain
+
+
+
 
 pragma solidity ^0.8.7;
 
 // REMIX IMPORTS
-
 // import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/security/ReentrancyGuard.sol";
 // import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/access/Ownable.sol";
 // import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/security/Pausable.sol";
 // import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/utils/SafeERC20.sol";
 // import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/IERC20.sol";
 
-
+// LOCAL IMPORTS
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
@@ -31,7 +32,7 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
    address public adminAddress; 
    uint256 public treasuryAmount;
    uint256 public treasuryFee;
-   uint256 public totalSignatures; // signatures to unpause game
+   uint256 public publicUnpause; // signature to unpause game
 
    mapping(uint256 => mapping(address => BetInfo)) public ledger;
    mapping(uint256 => Round) public rounds;
@@ -68,6 +69,7 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
     event Claim(address indexed sender, uint256 indexed epoch, uint256 amount);
     event StartRound(uint256 indexed epoch);
     event Pause(uint256 indexed epoch);
+    event SafeEndRound(uint256 winner);
 
     constructor(){
         adminAddress = msg.sender;
@@ -124,13 +126,12 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
      * @param epochs: array of epochs
      */
     function claim(uint256[] calldata epochs) external nonReentrant {
-        uint256 reward;
-                    
+        uint256 reward; // Initializes reward
+
         for (uint256 i = 0; i < epochs.length; i++) {
            
             require(rounds[epochs[i]].startTimestamp != 0, "Round has not started");
             require(block.timestamp > rounds[epochs[i]].closeTimestamp, "Round has not ended");
-
             uint256 addedReward = 0;
             
             if (rounds[epochs[i]].oracleCalled) {
@@ -243,9 +244,7 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
 
         round.rewardBaseCalAmount = rewardBaseCalAmount;
         round.rewardAmount = rewardAmount;
-
         treasuryAmount += treasuryAmt;
-
     }
 
     function executeRound() public whenNotPaused onlyOwner {
@@ -277,6 +276,7 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
     function _safeEndRound(
         uint256 epoch,
         uint256 winner
+        // add end timestamp?
     ) external onlyOwner {
         require(curRound > prevRound, "prev round has not yet ended!");
         require(block.timestamp >= rounds[epoch].startTimestamp, "Can only end round after round started");
@@ -284,6 +284,52 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
         round.winningPlayer = winner;
         round.oracleCalled = true;
         prevRound ++;
+        emit SafeEndRound(winner);
+    }
+
+       /**
+     * @notice Returns round epochs and bet information for a user that has participated
+     * @param user: user address
+     * @param cursor: cursor
+     * @param size: size
+     */
+    function getUserRounds(
+        address user,
+        uint256 cursor,
+        uint256 size
+    )
+        external
+        view
+        returns (
+            uint256[] memory,
+            BetInfo[] memory,
+            uint256
+        )
+    {
+        uint256 length = size;
+
+        if (length > userRounds[user].length - cursor) {
+            length = userRounds[user].length - cursor;
+        }
+
+        uint256[] memory values = new uint256[](length);
+        BetInfo[] memory betInfo = new BetInfo[](length);
+
+        for (uint256 i = 0; i < length; i++) {
+            values[i] = userRounds[user][cursor + i];
+            betInfo[i] = ledger[values[i]][user];
+        }
+
+        return (values, betInfo, cursor + length);
+    }
+
+    /**
+     * @notice Returns round epochs length
+     * @param user: user address
+     */
+    function getUserRoundsLength(address user) external view returns (uint256) {
+        console.log("test? inside user rounds?");
+        return userRounds[user].length;
     }
 
     ///////////////////////////////////////////////
@@ -306,17 +352,22 @@ contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
         _safeTransferBNB(adminAddress, currentTreasuryAmount);
     }
 
+    /**
+     * @notice Owner Pause Game
+     * @dev Callable by admin
+     */
     function pause() external whenNotPaused onlyOwner {
+        require(curEpoch == prevRound); // prevent overlap, can only pause before initilization of new round
         _pause();
-        totalSignatures = 0;
+        publicUnpause = 0;
     }
 
     function playerSignature() public whenPaused {
-        totalSignatures++;
+        publicUnpause++;
     }
 
     function confirmUnpause() external whenPaused {
-        require(totalSignatures >= 2, "require at least 2 people to sign");
+        require(publicUnpause >= 1, "require at least 1 person to sign");
         _unpause();
     }
 
