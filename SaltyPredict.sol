@@ -20,7 +20,6 @@ import "hardhat/console.sol"; // delete in production
 contract SaltyPredict is Ownable, Pausable, ReentrancyGuard {
    using SafeERC20 for IERC20;
 
-
    uint256 public minBetAmount;
    uint256 public curEpoch;
    uint256 public prevRound;
